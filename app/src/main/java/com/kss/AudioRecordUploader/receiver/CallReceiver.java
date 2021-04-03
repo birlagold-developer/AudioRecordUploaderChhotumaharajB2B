@@ -1,14 +1,20 @@
 package com.kss.AudioRecordUploader.receiver;
 
+import android.annotation.SuppressLint;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.media.MediaRecorder;
 import android.os.AsyncTask;
 import android.os.Bundle;
+import android.telephony.PhoneStateListener;
 import android.telephony.TelephonyManager;
 import android.util.Log;
 import android.view.Gravity;
 import android.widget.Toast;
+
+
+import androidx.room.Room;
 
 import com.kss.AudioRecordUploader.database.DataBaseAdapter;
 import com.kss.AudioRecordUploader.model.Data;
@@ -17,14 +23,19 @@ import com.kss.AudioRecordUploader.network.retrofit.RFInterface;
 import com.kss.AudioRecordUploader.network.retrofit.responsemodels.RmResultResponse;
 import com.kss.AudioRecordUploader.network.retrofit.responsemodels.RmUploadFileResponse;
 import com.kss.AudioRecordUploader.utils.Constant;
+import com.kss.AudioRecordUploader.utils.MyDatabase;
 import com.kss.AudioRecordUploader.utils.Networkstate;
 import com.kss.AudioRecordUploader.utils.SharedPrefrenceObj;
+import com.kss.AudioRecordUploader.utils.Todo;
 import com.kss.AudioRecordUploader.utils.Utility;
 
 import java.io.File;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
+import java.util.List;
 import java.util.Objects;
 
 import okhttp3.MediaType;
@@ -39,82 +50,113 @@ public class CallReceiver extends BroadcastReceiver {
 
     static boolean RINGING = false;
 
-    private String callerPhoneNumber;
+    public static String callerPhoneNumber="";
+
+
+    private MediaRecorder rec = null;
+    public static boolean recoderstarted = false;
+
+    ArrayList<Todo> todoArrayList = new ArrayList<>();
+    MyDatabase myDatabase;
+
+    public static String callerStartTime="";
+    public static String callerEndTime="";
+
 
     @Override
     public void onReceive(Context context, Intent intent) {
         this.context = context;
 
-        if (Objects.requireNonNull(intent.getAction()).equalsIgnoreCase("android.intent.action.PHONE_STATE")) {
-            Bundle extras = intent.getExtras();
-            String state = extras.getString(TelephonyManager.EXTRA_STATE);
-            if (Networkstate.haveNetworkConnection(context)) {
-                if (state != null && state.equalsIgnoreCase(TelephonyManager.EXTRA_STATE_IDLE)) {
-                    checkFolderAndUploadFile();
+        TelephonyManager manager = (TelephonyManager) context.getSystemService(context.TELEPHONY_SERVICE);
+        manager.listen(new PhoneStateListener() {
+            @Override
+            public void onCallStateChanged(int state, String incomingNumber) {
+                super.onCallStateChanged(state, incomingNumber);
+                Log.e(TAG,"incomingNumber===>"+incomingNumber);
+                if(!incomingNumber.equalsIgnoreCase("")&&incomingNumber!=null)
+                {
+                    callerPhoneNumber = ""+incomingNumber;
                 }
-            } else {
-                Toast toast = Toast.makeText(context, "NO INTERNET CONNECTION", Toast.LENGTH_LONG);
-                toast.setGravity(Gravity.CENTER, 0, 0);
-                toast.show();
 
-                context.sendBroadcast(
-                        new Intent().setAction("MANUAL_FILE_UPLOAD_COMPLETE")
-                );
-            }
-            //TODO
-//            Bundle bundle = intent.getExtras();
-//            String phoneNumber = bundle.getString("incoming_number");
-//            TelephonyManager telephony = (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
-//            MissedCallPhoneStateListener missedCallPhoneStateListener = new MissedCallPhoneStateListener(context, phoneNumber);
-//            telephony.listen(missedCallPhoneStateListener, PhoneStateListener.LISTEN_CALL_STATE);
+                if (TelephonyManager.CALL_STATE_IDLE == state ){
+                    try {
+                        Log.e(TAG,"CALL_STATE_IDLE===>");
+                        Log.e(TAG,"callerPhoneNumber===>"+callerPhoneNumber);
+                        if(recoderstarted && !callerPhoneNumber.equalsIgnoreCase(""))
+                        {
+                            Log.e(TAG,"CALL_STATE_IDLE===>recoderstarted");
+                            Thread.sleep(2000);
+                            recoderstarted = false;
 
-            if (state == null) {
-                return;
-            }
+                            Date date = new Date();
+                            String stringTime = ""+ DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM).format(date);
+                            callerEndTime = stringTime;
 
-            callerPhoneNumber = extras.getString(TelephonyManager.EXTRA_INCOMING_NUMBER);
+                            Log.e(TAG,"callerEndTime===>"+callerEndTime);
 
-            if (callerPhoneNumber == null) {
-                return;
-            }
+                            SimpleDateFormat simpleDateFormat = new SimpleDateFormat("dd/M/yyyy hh:mm:ss");
 
-            // If phone state "Rininging"
-            if (state.equals(TelephonyManager.EXTRA_STATE_RINGING)) {
-                RINGING = true;
-            }
+                            Date date1 = simpleDateFormat.parse(""+callerStartTime);
+                            Date date2 = simpleDateFormat.parse(""+callerEndTime);
 
-            // If incoming call is received
-            if (state.equals(TelephonyManager.EXTRA_STATE_OFFHOOK)) {
-                RINGING = false;
-            }
+                            Log.e(TAG,"callerStartTime===>After"+DateFormat.getDateTimeInstance().format(date1));
+                            Log.e(TAG,"callerEndTime===>After"+DateFormat.getDateTimeInstance().format(date2));
 
-            // If phone is Idle
-            if (state.equals(TelephonyManager.EXTRA_STATE_IDLE)) {
-                if (RINGING) {
-                    //Toast.makeText(context, "It was A MISSED CALL from : " + callerPhoneNumber, Toast.LENGTH_LONG).show();
-                    DataBaseAdapter dataBaseAdapter = new DataBaseAdapter(context).open();
-                    dataBaseAdapter.insertMissedCallLog(callerPhoneNumber, Constant.DATE_FORMAT.format(new Date()));
-                    dataBaseAdapter.close();
+                            String dateDiff = ""+printDifference(date1, date2);
+
+                            myDatabase = Room.databaseBuilder(context, MyDatabase.class, MyDatabase.DB_NAME).fallbackToDestructiveMigration().build();
+
+                            Todo todo = new Todo();
+                            todo.name = ""+callerPhoneNumber;
+                            todo.description = ""+callerStartTime;
+                            todo.category = ""+dateDiff;
+
+                            todoArrayList.add(todo);
+                            insertList(todoArrayList);
+
+                            if (Networkstate.haveNetworkConnection(context)) {
+                                checkFolderAndUploadFile();
+                            }
+
+
+                            Log.e(TAG,"CALL_STATE_IDLE===>Last");
+                        }
+                    }
+                    catch(Exception e) {
+                        Log.e("Exception","CALL_STATE_IDLE===>"+e.getMessage());
+                        e.printStackTrace();
+                    }
+                }
+                else if(TelephonyManager.CALL_STATE_OFFHOOK==state){
+                    try {
+                        Log.e(TAG,"CALL_STATE_OFFHOOK===>");
+                        if(recoderstarted==false)
+                        {
+
+                            Log.e(TAG,"CALL_STATE_OFFHOOK===>First");
+                            recoderstarted=true;
+
+                            Date date = new Date();
+                            String stringTime = ""+DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM).format(date);
+                            callerStartTime = stringTime;
+                            Log.e(TAG,"callerStartTime===>"+callerStartTime);
+
+                        }
+                    } catch (Exception e) {
+                        Log.e("Exception","CALL_STATE_OFFHOOK===>"+e.getMessage());
+                        e.printStackTrace();
+                    }
+                }
+                else if(TelephonyManager.CALL_STATE_RINGING==state){
+                    try {
+                        Log.e(TAG,"CALL_STATE_RINGING===>");
+                    } catch (Exception e) {
+                        Log.e("Exception","CALL_STATE_RINGING===>"+e.getMessage());
+                        e.printStackTrace();
+                    }
                 }
             }
-
-        } else if (Objects.requireNonNull(intent.getAction()).equalsIgnoreCase("MANUAL_FILE_UPLOAD")) {
-            if (Networkstate.haveNetworkConnection(context)) {
-                checkFolderAndUploadFile();
-            } else {
-                Toast toast = Toast.makeText(context, "NO INTERNET CONNECTION", Toast.LENGTH_LONG);
-                toast.setGravity(Gravity.CENTER, 0, 0);
-                toast.show();
-
-                context.sendBroadcast(
-                        new Intent().setAction("MANUAL_FILE_UPLOAD_COMPLETE")
-                );
-            }
-        }
-
-        if (Networkstate.haveNetworkConnection(context)) {
-            new UploadMissedCall(context).execute("");
-        }
+        }, PhoneStateListener.LISTEN_CALL_STATE);
     }
 
     private void checkFolderAndUploadFile() {
@@ -129,9 +171,7 @@ public class CallReceiver extends BroadcastReceiver {
                 Toast toast = Toast.makeText(context, "NO FILE AVAILABLE", Toast.LENGTH_LONG);
                 toast.setGravity(Gravity.CENTER, 0, 0);
                 toast.show();
-                context.sendBroadcast(
-                        new Intent().setAction("MANUAL_FILE_UPLOAD_COMPLETE")
-                );
+
             }
         }
     }
@@ -156,6 +196,9 @@ public class CallReceiver extends BroadcastReceiver {
                     String agentMobileNumber = SharedPrefrenceObj.getSharedValue(context, Constant.AGENT_NUMBBR);
                     String agentEmailID = SharedPrefrenceObj.getSharedValue(context, Constant.AGENT_EMAIL);
 
+                    Log.e(TAG,"agentMobileNumber===> "+agentMobileNumber);
+                    Log.e(TAG,"agentEmailID===> "+agentEmailID);
+
                     String clientMobileNo = Constant.getClientNumber(context, audioFile.getName());
                     String audioFileExtension = audioFile.getName().substring(audioFile.getName().lastIndexOf('.') + 1);
                     int durationInSeconds = Constant.getDurationInSecond(context, audioFile);
@@ -175,7 +218,7 @@ public class CallReceiver extends BroadcastReceiver {
 
                     MultipartBody.Part audioMultipartBodyPart = MultipartBody.Part.createFormData("audio", audioFile.getName(), audioFileRequestBody);
 
-                    upload(agentMobileNumberRequestBody, agentEmailIDRequestBody, clientMobileNumberRequestBody, totalDurationRequestBody, audioMultipartBodyPart, isLastRequestBody, i);
+                    //upload(agentMobileNumberRequestBody, agentEmailIDRequestBody, clientMobileNumberRequestBody, totalDurationRequestBody, audioMultipartBodyPart, isLastRequestBody, i);
                 }
             }
 
@@ -247,6 +290,7 @@ public class CallReceiver extends BroadcastReceiver {
             String agentEmailID = SharedPrefrenceObj.getSharedValue(context, Constant.AGENT_EMAIL);
 
             DataBaseAdapter dataBaseAdapter = new DataBaseAdapter(context).open();
+            Log.d(TAG, "agentMobileNumber: uploadedAudioFile: exists:" + agentMobileNumber);
 
             ArrayList<MissedCallLog> allMissedCallLog = dataBaseAdapter.getAllMissedCallLog();
 
@@ -274,6 +318,51 @@ public class CallReceiver extends BroadcastReceiver {
 
             return null;
         }
+    }
+
+    public String printDifference(Date startDate, Date endDate) {
+        //milliseconds
+        long different = endDate.getTime() - startDate.getTime();
+
+        long secondsInMilli = 1000;
+        long minutesInMilli = secondsInMilli * 60;
+        long hoursInMilli = minutesInMilli * 60;
+        long daysInMilli = hoursInMilli * 24;
+
+        long elapsedDays = different / daysInMilli;
+        different = different % daysInMilli;
+
+        long elapsedHours = different / hoursInMilli;
+        different = different % hoursInMilli;
+
+        long elapsedMinutes = different / minutesInMilli;
+        different = different % minutesInMilli;
+
+        long elapsedSeconds = different / secondsInMilli;
+
+        Log.e(TAG,""+elapsedHours+":"+elapsedMinutes+":"+elapsedSeconds);
+
+        return ""+elapsedHours+":"+elapsedMinutes+":"+elapsedSeconds;
+    }
+
+    @SuppressLint("StaticFieldLeak")
+    private void insertList(List<Todo> todoList) {
+        new AsyncTask<List<Todo>, Void, Void>() {
+            @Override
+            protected Void doInBackground(List<Todo>... params) {
+                myDatabase.daoAccess().insertTodoList(params[0]);
+
+                return null;
+
+            }
+
+            @Override
+            protected void onPostExecute(Void voids) {
+                super.onPostExecute(voids);
+
+            }
+        }.execute(todoList);
+
     }
 
 }

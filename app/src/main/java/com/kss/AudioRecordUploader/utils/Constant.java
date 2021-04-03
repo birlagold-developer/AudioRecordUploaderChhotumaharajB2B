@@ -8,8 +8,13 @@ import android.net.Uri;
 import android.os.Environment;
 import android.provider.ContactsContract;
 import android.text.TextUtils;
+import android.util.Log;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.text.SimpleDateFormat;
 import java.util.Locale;
 
@@ -17,12 +22,23 @@ public class Constant {
 
     public static SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ENGLISH);//2019-11-22 05:52:47
 
-    public static String URL = "http://chhotumaharajb2b.com/api/";
+    public static String URL = "https://chhotumaharajb2b.com/api/";
 
     public static String MESSAGE = "message";
 
     public static String AGENT_NUMBBR = "agent_number";
     public static String AGENT_EMAIL = "agent_email";
+
+
+    public static final String TAG = "CallRecord";
+
+    public static final String FILE_NAME_PATTERN = "^[\\d]{14}_[_\\d]*\\..+$";
+
+    public static final int STATE_INCOMING_NUMBER = 1;
+    public static final int STATE_CALL_START = 2;
+    public static final int STATE_CALL_END = 3;
+    public static final int RECORDING_ENABLED = 4;
+    public static final int RECORDING_DISABLED = 5;
 
 
     public static File getExternalStorageDirectory() {
@@ -33,11 +49,16 @@ public class Constant {
         return new File(getExternalStorageDirectory(), "Call");
     }
 
+    public static File getCallRecordingsDir() {
+
+        return new File(getExternalStorageDirectory(), "CallRecordings");
+    }
+
     public static String getClientNumber(Context context, String fileName) {
         String fileName1 = fileName.substring(fileName.indexOf(" ", 5) + 1);
         String value = fileName1.substring(0, fileName1.indexOf("_"));
-
-        if (value.startsWith("+91")) {
+        Log.e(TAG,"ClientNumber===> "+value);
+        if(value.startsWith("+") || value.equalsIgnoreCase("Conference call") || value.equalsIgnoreCase("Emergency number")) {
             return value;
         } else if (TextUtils.isDigitsOnly(value)) {
             return addPrefixIfRequire(value);
@@ -46,15 +67,68 @@ public class Constant {
         }
     }
 
+    public static boolean isCopy(File sourceLocation, File targetLocation)
+    {
+        try
+        {
+            if(sourceLocation.exists()){
+
+                InputStream in = new FileInputStream(sourceLocation);
+                OutputStream out = new FileOutputStream(targetLocation);
+
+                // Copy the bits from instream to outstream
+                byte[] buf = new byte[1024];
+                int len;
+
+                while ((len = in.read(buf)) > 0) {
+                    out.write(buf, 0, len);
+                }
+
+                in.close();
+                out.close();
+                return true;
+
+            }else{
+                return false;
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+
+        }
+        return false;
+    }
 
     private static String addPrefixIfRequire(String value) {
-        if (value.startsWith("+91")) {
+        if (value.startsWith("+")) {
             return value;
         } else if (value.length() > 10) {
             return "+91" + value.substring(value.length() - 10);
         } else {
             return "+91" + value;
         }
+    }
+
+    public static File getLastModified(String directoryFilePath)
+    {
+        File directory = new File(directoryFilePath);
+        File[] files = directory.listFiles(File::isFile);
+        long lastModifiedTime = Long.MIN_VALUE;
+        File chosenFile = null;
+
+        if (files != null)
+        {
+            for (File file : files)
+            {
+                if (file.lastModified() > lastModifiedTime)
+                {
+                    chosenFile = file;
+                    lastModifiedTime = file.lastModified();
+                }
+            }
+        }
+
+        return chosenFile;
     }
 
     public static int getDurationInSecond(Context context, File audioFile) {
@@ -111,6 +185,6 @@ public class Constant {
         if (cur != null) {
             cur.close();
         }
-        return null;
+        return "";
     }
 }

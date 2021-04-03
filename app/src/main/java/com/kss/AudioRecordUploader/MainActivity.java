@@ -67,7 +67,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     }
 
     private void callNextActivity() {
-        Intent intent = new Intent(MainActivity.this, UploaderActivity.class);
+        Intent intent = new Intent(MainActivity.this, ContactActivity.class);
         startActivity(intent);
         finish();
     }
